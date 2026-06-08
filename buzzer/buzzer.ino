@@ -36,8 +36,12 @@ static const gpio_num_t CAN_TX_PIN = GPIO_NUM_5;
 static const gpio_num_t CAN_RX_PIN = GPIO_NUM_4;
 
 static const int  BUZZER_PIN        = 13;
-static const bool ALARM_ACTIVE_HIGH = true;   // LED test. Relay module -> false.
+static const bool ALARM_ACTIVE_HIGH = false;  // active-LOW relay module. Flip to true if buzzer is stuck ON at idle.
 static const bool SELF_TEST_HONK    = true;
+
+static const int      LED_PIN        = 22;    // status LED: blinks while ANY alarm is active
+static const bool     LED_ACTIVE_HIGH = true; // external LED, low-side: GPIO HIGH = on
+static const uint16_t LED_BLINK_MS   = 400;   // LED on/off half-period
 
 static const bool DISCOVERY = true;   // dump reassembled alert/proprietary PGNs to learn signatures
 static const bool DISCOVERY_NEW_ONLY = true;  // log a 126720 only the FIRST time its signature appears (cuts noise)
@@ -113,6 +117,18 @@ static void setDirect(AlarmId id, bool on, bool off) {  // numeric w/ hysteresis
 }
 
 static void buzzerWrite(bool on) { digitalWrite(BUZZER_PIN, (on == ALARM_ACTIVE_HIGH) ? HIGH : LOW); }
+static void ledWrite(bool on)    { digitalWrite(LED_PIN,    (on == LED_ACTIVE_HIGH)   ? HIGH : LOW); }
+
+// Status LED: blinks continuously while ANY alarm is active (independent of the
+// buzzer's 3-pulse limit), off when all clear.
+static void updateLed() {
+  bool anyActive = false;
+  for (int i = 0; i < ALARM_COUNT; i++) if (A[i].active) { anyActive = true; break; }
+  static bool on = false; static uint32_t ts = 0;
+  uint32_t now = millis();
+  if (!anyActive) { if (on) { on = false; ledWrite(false); } return; }
+  if (now - ts >= LED_BLINK_MS) { ts = now; on = !on; ledWrite(on); }
+}
 
 static void updateBuzzer() {
   // Expire NAMED alerts the device stopped re-announcing.
@@ -474,6 +490,8 @@ void setup() {
   digitalWrite(BUZZER_PIN, ALARM_ACTIVE_HIGH ? LOW : HIGH);
   pinMode(BUZZER_PIN, OUTPUT);
   buzzerWrite(false);
+  pinMode(LED_PIN, OUTPUT);
+  ledWrite(false);
   delay(300);
   Serial.println(F("\n=== NMEA2000 multi-alarm buzzer (listen-only) ==="));
 
@@ -528,6 +546,7 @@ void loop() {
   }
 
   updateBuzzer();
+  updateLed();
 
 #if WIFI_ENABLE
   dns.processNextRequest();

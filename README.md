@@ -25,7 +25,9 @@ phone — no app, no internet needed.
     dangerous target) by detecting the autopilot's proprietary alarm burst on
     PGN 126720. See [How alarm detection works](#how-alarm-detection-works).
 - **Silence / acknowledge** and **discovery** controls on the web page.
-- Distinct non-blocking buzzer patterns per alarm; never blocks CAN reception.
+- Non-blocking horn engine: each alarm sounds a fixed number of pulses then
+  stays silent (no endless honking), while a status LED blinks for the whole
+  duration of the alarm. Never blocks CAN reception.
 - Zero external libraries — only the ESP32 Arduino core.
 
 ## Hardware
@@ -34,8 +36,9 @@ phone — no app, no internet needed.
 |------|-------|
 | **ESP32** (WROOM-32 dev board) | Any classic ESP32 with the built-in CAN controller |
 | **VP230 / SN65HVD230** CAN transceiver | 3.3 V — pairs directly with the ESP32 |
-| **LED** (testing) → **relay + 12 V horn** (final) | Driven from one GPIO |
-| Inline fuse for the horn | Standard practice for any switched 12 V load |
+| **Relay module** + **12 V buzzer / horn** | Buzzer switched by the relay's NO/COM contacts |
+| **Status LED** + ~330 Ω resistor | Blinks while any alarm is active |
+| Inline fuse for the buzzer | Standard practice for any switched 12 V load |
 
 ### Wiring
 
@@ -53,10 +56,23 @@ phone — no app, no internet needed.
 The backbone must already be **120 Ω terminated at both ends** — tap onto an
 existing terminated bus, don't add a third terminator.
 
-**Output (GPIO13):**
-- *Testing:* `GPIO13 → 330 Ω → LED(+) → LED(−) → GND` (`ALARM_ACTIVE_HIGH = true`).
-- *Final:* `GPIO13 → relay module IN`, horn switched via relay COM/NO from 12 V
-  (most relay modules are active-LOW → set `ALARM_ACTIVE_HIGH = false`).
+**Buzzer / horn (GPIO13 → relay):** sounds 3 short pulses per alarm.
+
+| ESP32 | Relay module |
+|-------|--------------|
+| GPIO13 | IN |
+| 5V (VIN) | VCC |
+| GND | GND (common with 12 V −) |
+
+Load side: `12V+ → COM`, `NO → buzzer(+)`, `buzzer(−) → 12V−`. Leave **NC**
+unused (silent until triggered). Most relay modules are **active-LOW**, so
+`ALARM_ACTIVE_HIGH = false` (flip to `true` if the buzzer is on at idle). A
+12 V transistor low-side switch (e.g. BC337 for loads ≤ ~0.5 A) works too — for
+that, set `ALARM_ACTIVE_HIGH = true`.
+
+**Status LED (GPIO22):** blinks the whole time any alarm is active.
+`GPIO22 → 330 Ω → LED(+) → LED(−) → GND` (active-HIGH). Avoid strapping pins
+(0, 2, 12, 15) and the RTC-crystal pins (32, 33) for the LED.
 
 ## Build & flash
 
@@ -97,15 +113,18 @@ roadmap below covers decoding specific conditions directly for named alarms.
 
 | Flag | Purpose |
 |------|---------|
-| `ALARM_ACTIVE_HIGH` | `true` for LED / `false` for an active-LOW relay |
-| `DISCOVERY` | Dump reassembled alert/proprietary PGNs (reverse engineering) |
-| `DISCOVERY_NEW_ONLY` | Log each proprietary message signature only once |
-| `SIMULATE` | Cycle each alarm's buzzer pattern at boot |
+| `ALARM_ACTIVE_HIGH` | `false` for an active-LOW relay (default) / `true` for a transistor or LED |
+| `HORN_ON_MS` / `HORN_OFF_MS` / `ALARM_REPEATS` | Horn cadence (default 0.5 s on / 1 s off, 3 pulses) |
+| `DEPTH_ON_M` / `DEPTH_OFF_M` | Shallow-depth alarm thresholds (default 2.5 m on / 3.0 m off) |
+| `LED_PIN` / `LED_BLINK_MS` | Status-LED pin (default GPIO22) and blink rate |
+| `DISCOVERY` / `DISCOVERY_NEW_ONLY` | Dump reassembled proprietary PGNs (reverse engineering) |
+| `SIMULATE` | Cycle each alarm's pattern at boot |
 | `WIFI_ENABLE` / `AP_SSID` | Web server on/off and hotspot name |
 
 ## Roadmap
 
-- [ ] Swap LED → relay + 12 V horn
+- [x] Relay-driven 12 V buzzer + status LED
+- [x] Limit each alarm to a fixed number of horn pulses
 - [ ] Auto-silence the buzzer when the alarm is acknowledged on the plotter
 - [ ] **Named alarms** by decoding conditions directly:
   - AIS dangerous via CPA/TCPA from PGNs 129038/129039 + own position
