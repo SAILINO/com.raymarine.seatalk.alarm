@@ -24,6 +24,8 @@ phone — no app, no internet needed.
   - **Axiom alarm (generic)** — fires on any Raymarine MFD alarm (incl. AIS
     dangerous target) by detecting the autopilot's proprietary alarm burst on
     PGN 126720. See [How alarm detection works](#how-alarm-detection-works).
+- **Per-alarm enable/disable toggles** on the web page, **persisted to flash
+  (NVS)** so they survive reboots — handy for silencing nuisance triggers.
 - **Silence / acknowledge** and **discovery** controls on the web page.
 - Non-blocking horn engine: each alarm sounds a fixed number of pulses then
   stays silent (no endless honking), while a status LED blinks for the whole

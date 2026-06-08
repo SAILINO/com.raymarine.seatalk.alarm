@@ -22,6 +22,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
+#include <Preferences.h>   // persist per-alarm enable flags in NVS flash
 
 #define WIFI_ENABLE 1                 // 0 = disable the WiFi log server
 #define AP_SSID     "ORJA-SeaTalk"   // open hotspot name (no password)
@@ -80,17 +81,29 @@ struct Alarm {
   bool        active;
   uint32_t    lastSeen;    // for auto-expire of NAMED alerts
   uint8_t     soundsLeft;  // remaining horn pulses for the current activation
+  bool        enabled;     // user toggle (persisted); a disabled alarm never fires
 };
 static Alarm A[ALARM_COUNT] = {
-  /*AL_DEPTH*/        {"DEPTH shallow",    100, false, 0, 0},
-  /*AL_AIS*/         {"AIS dangerous",     95, false, 0, 0},
-  /*AL_RADAR*/       {"RADAR dangerous",   95, false, 0, 0},
-  /*AL_GPS*/         {"GPS failure",       85, false, 0, 0},
-  /*AL_PILOT_BATT*/  {"PILOT low batt",    70, false, 0, 0},
-  /*AL_PILOT_OC*/    {"PILOT off course",  80, false, 0, 0},
-  /*AL_PILOT_WSHIFT*/{"PILOT wind shift",  60, false, 0, 0},
-  /*AL_AXIOM*/       {"AXIOM alarm",       90, false, 0, 0},
+  /*AL_DEPTH*/        {"DEPTH shallow",    100, false, 0, 0, true},
+  /*AL_AIS*/         {"AIS dangerous",     95, false, 0, 0, true},
+  /*AL_RADAR*/       {"RADAR dangerous",   95, false, 0, 0, true},
+  /*AL_GPS*/         {"GPS failure",       85, false, 0, 0, true},
+  /*AL_PILOT_BATT*/  {"PILOT low batt",    70, false, 0, 0, true},
+  /*AL_PILOT_OC*/    {"PILOT off course",  80, false, 0, 0, true},
+  /*AL_PILOT_WSHIFT*/{"PILOT wind shift",  60, false, 0, 0, true},
+  /*AL_AXIOM*/       {"AXIOM alarm",       90, false, 0, 0, true},
 };
+
+static Preferences prefs;
+static void loadEnabled() {
+  uint32_t m = prefs.getUInt("enmask", 0xFFFFFFFF);   // default: all enabled
+  for (int i = 0; i < ALARM_COUNT; i++) A[i].enabled = (m >> i) & 1;
+}
+static void saveEnabled() {
+  uint32_t m = 0;
+  for (int i = 0; i < ALARM_COUNT; i++) if (A[i].enabled) m |= (1u << i);
+  prefs.putUInt("enmask", m);
+}
 
 // Print to Serial AND store in the ring buffer (with an uptime stamp).
 static void logf(const char* fmt, ...) {
@@ -107,11 +120,13 @@ static void logf(const char* fmt, ...) {
 }
 
 static void raiseAlert(AlarmId id) {        // NAMED alert seen as active
+  if (!A[id].enabled) return;               // user-disabled: ignore entirely
   if (!A[id].active) { logf(">>> ALARM ON : %s", A[id].name); A[id].soundsLeft = ALARM_REPEATS; }
   A[id].active = true;
   A[id].lastSeen = millis();
 }
 static void setDirect(AlarmId id, bool on, bool off) {  // numeric w/ hysteresis
+  if (!A[id].enabled) return;               // user-disabled: ignore entirely
   if (!A[id].active && on)  { A[id].active = true;  A[id].soundsLeft = ALARM_REPEATS; logf(">>> ALARM ON : %s", A[id].name); }
   if ( A[id].active && off) { A[id].active = false; logf("<<< alarm off: %s", A[id].name); }
 }
@@ -396,26 +411,36 @@ h2{font-size:12px;color:#8fb0c0;margin:6px 12px 0;text-transform:uppercase;lette
 button{background:#1c4a5e;color:#e8f0f4;border:0;border-radius:6px;padding:6px 12px;font-size:13px;float:right;margin-top:-2px}
 #log{padding:4px 12px;font-family:monospace;font-size:12px}
 .r{padding:3px 0;border-bottom:1px solid #16323f;white-space:pre-wrap}
+#alarms{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px}
+.t{padding:6px 11px;border-radius:14px;font-size:13px;cursor:pointer;background:#13502a;color:#e8f0f4;user-select:none}
+.t.off{background:#26323a;color:#7a8a93;text-decoration:line-through}
+.t.act{box-shadow:0 0 0 2px #ff5a5a}
 </style></head><body><header>&#9875; SeaTalk / NMEA2000
 <button onclick="fetch('/mute')">Silence</button>
 <button onclick="fetch('/reset')">Reset baseline</button></header>
 <div id=b class=ok>connecting&#8230;</div>
-<div id=dash></div><h2>Event log</h2><div id=log></div><script>
+<div id=dash></div>
+<h2>Alarms (tap to enable/disable)</h2><div id=alarms></div>
+<h2>Event log</h2><div id=log></div><script>
 function esc(s){return s.replace(/[<&]/g,c=>c=='<'?'&lt;':'&amp;')}
 async function t(){try{
  const x=(await (await fetch('/data',{cache:'no-store'})).text()).split('\n');
  const a=x[0].slice(7).split(',').filter(s=>s.length),b=document.getElementById('b');
  if(a.length){b.className='al';b.textContent='⚠ '+a.join('   •   ')}
  else{b.className='ok';b.textContent='All clear'}
- let i=1,dash=[];
- for(;i<x.length&&x[i].slice(0,2)=='D:';i++){const p=x[i].slice(2).split('|');dash.push(p)}
+ let i=1,dash=[],al=[];
+ for(;i<x.length&&x[i].slice(0,2)=='D:';i++){dash.push(x[i].slice(2).split('|'))}
+ for(;i<x.length&&x[i].slice(0,3)=='AL:';i++){al.push(x[i].slice(3).split('|'))}
  if(x[i]=='===')i++;
  document.getElementById('dash').innerHTML=dash.map(p=>
   '<div class="c'+((+p[2])>10?' st':'')+'"><div class=cl>'+esc(p[0])+
   '</div><div class=cv>'+esc(p[1])+'</div></div>').join('');
+ document.getElementById('alarms').innerHTML=al.map(p=>
+  '<div class="t'+(p[2]=='0'?' off':'')+(p[3]=='1'?' act':'')+'" onclick="tog('+p[0]+')">'+esc(p[1])+'</div>').join('');
  document.getElementById('log').innerHTML=x.slice(i).filter(s=>s.length)
   .map(s=>'<div class=r>'+esc(s)+'</div>').join('')
 }catch(e){}}
+function tog(id){fetch('/toggle?id='+id).then(t)}
 setInterval(t,1500);t()</script></body></html>)HTML";
 
 static void handleRoot() { server.send_P(200, "text/html", PAGE); }
@@ -446,6 +471,12 @@ static void handleData() {
                                   fabs(T.lon), T.lon >= 0 ? 'E' : 'W'); add("Position", T.posT, b); }
   if (!isnan(T.rudder)){ snprintf(b, sizeof b, "%+.0f\xC2\xB0", T.rudder); add("Rudder", T.rudT, b); }
 
+  // Alarm toggles: "AL:id|name|enabled|active"
+  for (int i = 0; i < ALARM_COUNT; i++) {
+    out += "AL:"; out += String(i); out += "|"; out += A[i].name; out += "|";
+    out += (A[i].enabled ? "1" : "0"); out += "|"; out += (A[i].active ? "1" : "0"); out += "\n";
+  }
+
   out += "===\n";
   for (int k = 0; k < logCount; k++) {           // newest first
     int idx = ((logHead - 1 - k) % LOG_LINES + LOG_LINES) % LOG_LINES;
@@ -467,6 +498,19 @@ static void handleMute() {                        // user acknowledges: clear al
   server.send(200, "text/plain", "ok");
 }
 
+static void handleToggle() {                       // enable/disable one alarm (persisted)
+  if (server.hasArg("id")) {
+    int id = server.arg("id").toInt();
+    if (id >= 0 && id < ALARM_COUNT) {
+      A[id].enabled = !A[id].enabled;
+      if (!A[id].enabled) { A[id].active = false; A[id].soundsLeft = 0; A[id].lastSeen = 0; }
+      saveEnabled();
+      logf("-- %s %s --", A[id].name, A[id].enabled ? "ENABLED" : "disabled");
+    }
+  }
+  server.send(200, "text/plain", "ok");
+}
+
 static void setupWifi() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID);                           // open AP, no password
@@ -476,6 +520,7 @@ static void setupWifi() {
   server.on("/data", handleData);
   server.on("/reset", handleReset);               // clear learned signatures (baseline)
   server.on("/mute", handleMute);                 // acknowledge / silence all alarms
+  server.on("/toggle", handleToggle);             // enable/disable one alarm
   server.onNotFound(handleRoot);                  // any URL shows the page (pops captive portal)
   server.begin();
   logf("WiFi AP '%s' up -> connect, browse http://%s/", AP_SSID, ip.toString().c_str());
@@ -492,6 +537,8 @@ void setup() {
   buzzerWrite(false);
   pinMode(LED_PIN, OUTPUT);
   ledWrite(false);
+  prefs.begin("alarms", false);
+  loadEnabled();
   delay(300);
   Serial.println(F("\n=== NMEA2000 multi-alarm buzzer (listen-only) ==="));
 
