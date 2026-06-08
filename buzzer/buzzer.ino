@@ -58,32 +58,34 @@ static char      logBuf[LOG_LINES][LOG_WIDTH];
 static int       logHead = 0, logCount = 0;
 
 // ----------------------------- Buzzer engine -----------------------------
-struct Pattern { uint16_t onMs, offMs; };
-static const Pattern PAT_URGENT = {100, 100};  // depth / AIS / radar
-static const Pattern PAT_MED    = {200, 200};  // gps / off-course
-static const Pattern PAT_SLOW   = {200, 700};  // low batt / wind shift
+// Each alarm sounds the horn ALARM_REPEATS times (HORN_ON_MS on / HORN_OFF_MS
+// off), then stays silent until it's acknowledged (Silence) or clears and
+// re-raises -- so an unacknowledged alarm does NOT honk endlessly.
+static const uint16_t HORN_ON_MS    = 500;
+static const uint16_t HORN_OFF_MS   = 1000;
+static const uint8_t  ALARM_REPEATS = 3;
 
 // ----------------------------- Alarm table -------------------------------
-// One row per alarm. Higher priority wins the buzzer when several are active.
+// One row per alarm. Higher priority sounds first when several are active.
 enum AlarmId { AL_DEPTH, AL_AIS, AL_RADAR, AL_GPS, AL_PILOT_BATT,
                AL_PILOT_OC, AL_PILOT_WSHIFT, AL_AXIOM, ALARM_COUNT };
 
 struct Alarm {
   const char* name;
-  Pattern     pat;
   uint8_t     prio;
   bool        active;
-  uint32_t    lastSeen;   // for auto-expire of NAMED alerts
+  uint32_t    lastSeen;    // for auto-expire of NAMED alerts
+  uint8_t     soundsLeft;  // remaining horn pulses for the current activation
 };
 static Alarm A[ALARM_COUNT] = {
-  /*AL_DEPTH*/        {"DEPTH shallow",    PAT_URGENT, 100, false, 0},
-  /*AL_AIS*/         {"AIS dangerous",    PAT_URGENT,  95, false, 0},
-  /*AL_RADAR*/       {"RADAR dangerous",  PAT_URGENT,  95, false, 0},
-  /*AL_GPS*/         {"GPS failure",      PAT_MED,     85, false, 0},
-  /*AL_PILOT_BATT*/  {"PILOT low batt",   PAT_SLOW,    70, false, 0},
-  /*AL_PILOT_OC*/    {"PILOT off course", PAT_MED,     80, false, 0},
-  /*AL_PILOT_WSHIFT*/{"PILOT wind shift", PAT_SLOW,    60, false, 0},
-  /*AL_AXIOM*/       {"AXIOM alarm",      PAT_URGENT,  90, false, 0},
+  /*AL_DEPTH*/        {"DEPTH shallow",    100, false, 0, 0},
+  /*AL_AIS*/         {"AIS dangerous",     95, false, 0, 0},
+  /*AL_RADAR*/       {"RADAR dangerous",   95, false, 0, 0},
+  /*AL_GPS*/         {"GPS failure",       85, false, 0, 0},
+  /*AL_PILOT_BATT*/  {"PILOT low batt",    70, false, 0, 0},
+  /*AL_PILOT_OC*/    {"PILOT off course",  80, false, 0, 0},
+  /*AL_PILOT_WSHIFT*/{"PILOT wind shift",  60, false, 0, 0},
+  /*AL_AXIOM*/       {"AXIOM alarm",       90, false, 0, 0},
 };
 
 // Print to Serial AND store in the ring buffer (with an uptime stamp).
@@ -101,12 +103,12 @@ static void logf(const char* fmt, ...) {
 }
 
 static void raiseAlert(AlarmId id) {        // NAMED alert seen as active
-  if (!A[id].active) logf(">>> ALARM ON : %s", A[id].name);
+  if (!A[id].active) { logf(">>> ALARM ON : %s", A[id].name); A[id].soundsLeft = ALARM_REPEATS; }
   A[id].active = true;
   A[id].lastSeen = millis();
 }
 static void setDirect(AlarmId id, bool on, bool off) {  // numeric w/ hysteresis
-  if (!A[id].active && on)  { A[id].active = true;  logf(">>> ALARM ON : %s", A[id].name); }
+  if (!A[id].active && on)  { A[id].active = true;  A[id].soundsLeft = ALARM_REPEATS; logf(">>> ALARM ON : %s", A[id].name); }
   if ( A[id].active && off) { A[id].active = false; logf("<<< alarm off: %s", A[id].name); }
 }
 
@@ -117,19 +119,26 @@ static void updateBuzzer() {
   uint32_t now = millis();
   for (int i = 0; i < ALARM_COUNT; i++)
     if (A[i].active && A[i].lastSeen && (now - A[i].lastSeen > ALERT_TIMEOUT_MS)) {
-      A[i].active = false; A[i].lastSeen = 0;
+      A[i].active = false; A[i].lastSeen = 0; A[i].soundsLeft = 0;
       logf("<<< alarm off (timeout): %s", A[i].name);
     }
 
-  // Pick highest-priority active alarm.
-  const Pattern* p = nullptr; int best = -1;
+  // Highest-priority active alarm that still has horn pulses left to play.
+  int best = -1;
   for (int i = 0; i < ALARM_COUNT; i++)
-    if (A[i].active && (best < 0 || A[i].prio > A[best].prio)) { best = i; p = &A[i].pat; }
+    if (A[i].active && A[i].soundsLeft > 0 && (best < 0 || A[i].prio > A[best].prio)) best = i;
 
-  static bool phaseOn = false; static uint32_t phaseTs = 0;
-  if (!p) { buzzerWrite(false); phaseOn = false; return; }
-  uint16_t dur = phaseOn ? p->onMs : p->offMs;
-  if (now - phaseTs >= dur) { phaseOn = !phaseOn; phaseTs = now; buzzerWrite(phaseOn); }
+  static bool phaseOn = false; static uint32_t phaseTs = 0; static int prevBest = -1;
+  if (best < 0) { buzzerWrite(false); phaseOn = false; prevBest = -1; return; }
+  if (prevBest < 0) {                       // a burst just started: sound the first pulse now
+    phaseOn = true; phaseTs = now; prevBest = best; buzzerWrite(true); return;
+  }
+  prevBest = best;
+  uint16_t dur = phaseOn ? HORN_ON_MS : HORN_OFF_MS;
+  if (now - phaseTs >= dur) {
+    phaseOn = !phaseOn; phaseTs = now; buzzerWrite(phaseOn);
+    if (!phaseOn && A[best].soundsLeft > 0) A[best].soundsLeft--;   // count one completed pulse
+  }
 }
 
 // ----------------------------- Fast-packet reassembly --------------------
@@ -339,7 +348,7 @@ static void simulateAlarms() {
   Serial.println(F("SIMULATE: previewing each alarm pattern (4s each)..."));
   for (int i = 0; i < ALARM_COUNT; i++) {
     Serial.printf("  -> %s\n", A[i].name);
-    A[i].active = true;
+    A[i].active = true; A[i].soundsLeft = ALARM_REPEATS;
     uint32_t until = millis() + 4000;
     while (millis() < until) { updateBuzzer(); delay(5); }   // keep pattern ticking
     A[i].active = false;
@@ -436,7 +445,7 @@ static void handleReset() {
 }
 
 static void handleMute() {                        // user acknowledges: clear all alarms
-  for (int i = 0; i < ALARM_COUNT; i++) { A[i].active = false; A[i].lastSeen = 0; }
+  for (int i = 0; i < ALARM_COUNT; i++) { A[i].active = false; A[i].lastSeen = 0; A[i].soundsLeft = 0; }
   buzzerWrite(false);
   logf("-- silenced by user --");
   server.send(200, "text/plain", "ok");
