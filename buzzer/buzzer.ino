@@ -46,7 +46,7 @@ static const bool RAW_LOG   = false;  // dump every raw frame
 static const bool SIMULATE  = false;  // true = at boot, cycle each alarm ~4s to preview its LED/horn pattern
 
 // Direct numeric thresholds (hysteresis on/off)
-static const float DEPTH_ON_M  = 2.0, DEPTH_OFF_M = 2.5;
+static const float DEPTH_ON_M  = 2.5, DEPTH_OFF_M = 3.0;  // alarm below 2.5 m; clears above 3.0 m
 
 // A NAMED alert auto-clears this many ms after the device stops re-announcing it.
 static const uint32_t ALERT_TIMEOUT_MS = 15000;
