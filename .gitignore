@@ -1,0 +1,11 @@
+# Local Claude Code tooling config
+.claude/
+
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.hex
+
+# OS
+.DS_Store
