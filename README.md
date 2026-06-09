@@ -44,6 +44,8 @@ phone — no app, no internet needed.
 
 ### Wiring
 
+📐 **Full ASCII schematic + pin map: [WIRING.md](WIRING.md).** Summary below.
+
 **ESP32 ↔ VP230 ↔ bus:**
 
 | ESP32 | VP230 |
