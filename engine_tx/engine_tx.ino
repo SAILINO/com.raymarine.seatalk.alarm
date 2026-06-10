@@ -6,8 +6,10 @@
  * with real sensor readings later.
  *   PGN 127488 (Rapid Update) : RPM
  *   PGN 127489 (Dynamic)      : oil pressure, oil temp, coolant temp
- *   PGN 127508 (Battery)      : voltage (random 10..14 V)
+ *   PGN 127508 (Battery)      : voltage (random 10..14 V) + current
  *   PGN 127505 (Fluid Level)  : fuel / fresh water / black water tanks
+ *   PGN 129025/129026/129029  : GPS position, COG/SOG, GNSS fix
+ *   PGN 130306 (Wind)         : apparent wind speed + angle
  *
  * Board : ESP32 WROOM-32   CAN: VP230 transceiver (same wiring as the buzzer)
  *   ESP32 GPIO5 -> VP230 CTX (TX),  GPIO4 -> VP230 CRX (RX),  3V3, GND, CANH/CANL
@@ -39,7 +41,11 @@ static const uint8_t NODE_SOURCE_ADDR = 22;   // starting address (auto-claims i
 //   127489 = Engine Parameters, Dynamic     (oil temp, coolant temp, ...)
 //   127508 = Battery Status                 (voltage)
 //   127505 = Fluid Level                    (tanks)
-static const unsigned long TX_PGNS[] = { 127488L, 127489L, 127508L, 127505L, 0 };
+//   129025/129026/129029 = Position rapid / COG-SOG rapid / GNSS fix
+//   130306 = Wind Data                      (apparent)
+static const unsigned long TX_PGNS[] = {
+  127488L, 127489L, 127508L, 127505L, 129025L, 129026L, 129029L, 130306L, 0
+};
 
 // ALARM_TEST: send OVER-LIMIT values + warning flags to make the plotter raise
 // engine alarms (coolant >130 C, oil pressure ~14 psi). false = normal sweeps.
@@ -52,6 +58,18 @@ static double fakeOilC()       { return 95.0 + 5.0 * sin(millis() / 11000.0); } 
 static double fakeOilPressPa() { return ALARM_TEST ? 1.0e5  : (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // 1 bar (~14.5 psi) < 20
 static double fakeBatteryV()   { return random(1000, 1401) / 100.0; }      // random 10.00 .. 14.00 V
 static double fakeBatteryA()   { return random(0, 5001) / 100.0 - 20.0; }  // random -20.0 .. +30.0 A
+
+static const double   KN2MS     = 0.514444;   // knots -> m/s
+static const uint16_t DAYS_1970 = 20614;      // fake GNSS date (2026-06-10)
+
+// GPS: a position slowly circling off the Ligurian coast, with COG/SOG.
+static double fakeLat()    { return 43.1000 + 0.010 * sin(millis() / 60000.0); }
+static double fakeLon()    { return 7.4000  + 0.010 * cos(millis() / 60000.0); }
+static double fakeCogDeg() { return 90.0 + 30.0 * sin(millis() / 30000.0); }   // ~60..120
+static double fakeSogKn()  { return 5.5; }
+// Wind (apparent).
+static double fakeWindKn()     { return 8.0  + 4.0  * sin(millis() / 8000.0); }   // ~4..12 kn
+static double fakeWindAngDeg()  { return 40.0 + 20.0 * sin(millis() / 10000.0); } // ~20..60 deg
 
 // Fake tanks: instance, fluid type, base level %, sweep amplitude %, capacity L.
 struct FakeTank { uint8_t instance; tN2kFluidType type; double base, amp, capacityL; };
@@ -155,5 +173,37 @@ void loop() {
       SetN2kFluidLevel(m, tk.instance, tk.type, level, tk.capacityL);
       NMEA2000.SendMsg(m);
     }
+  }
+
+  // PGN 129025 position + 129026 COG/SOG (rapid, ~4 Hz)
+  static uint32_t lastPos = 0;
+  if (now - lastPos >= 250) {
+    lastPos = now;
+    tN2kMsg mp;
+    SetN2kLatLonRapid(mp, fakeLat(), fakeLon());
+    NMEA2000.SendMsg(mp);
+    tN2kMsg mc;
+    SetN2kCOGSOGRapid(mc, 0xff, N2khr_true, DegToRad(fakeCogDeg()), fakeSogKn() * KN2MS);
+    NMEA2000.SendMsg(mc);
+  }
+
+  // PGN 129029 GNSS fix (full position with sats/HDOP), ~1 Hz
+  static uint32_t lastGnss = 0;
+  if (now - lastGnss >= 1000) {
+    lastGnss = now;
+    double secs = fmod(millis() / 1000.0, 86400.0);   // fake UTC seconds-since-midnight
+    tN2kMsg m;
+    SetN2kGNSS(m, 0xff, DAYS_1970, secs, fakeLat(), fakeLon(), 0.0 /*alt*/,
+               N2kGNSSt_GPS, N2kGNSSm_GNSSfix, 11 /*sats*/, 0.9 /*HDOP*/, 1.5 /*PDOP*/, 0.0 /*geoidal*/);
+    NMEA2000.SendMsg(m);
+  }
+
+  // PGN 130306 apparent wind (~4 Hz)
+  static uint32_t lastWind = 0;
+  if (now - lastWind >= 250) {
+    lastWind = now;
+    tN2kMsg m;
+    SetN2kWindSpeed(m, 0xff, fakeWindKn() * KN2MS, DegToRad(fakeWindAngDeg()), N2kWind_Apparent);
+    NMEA2000.SendMsg(m);
   }
 }
