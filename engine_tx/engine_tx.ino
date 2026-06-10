@@ -50,7 +50,8 @@ static double fakeRpm()        { return ALARM_TEST ? 2000.0 : 1200.0 + 800.0 * s
 static double fakeCoolantC()   { return ALARM_TEST ? 135.0  : 82.0   + 6.0   * sin(millis() / 9000.0); }  // >130 = over-temp
 static double fakeOilC()       { return 95.0 + 5.0 * sin(millis() / 11000.0); }                          // oil temp stays normal
 static double fakeOilPressPa() { return ALARM_TEST ? 1.0e5  : (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // 1 bar (~14.5 psi) < 20
-static double fakeBatteryV()   { return random(1000, 1401) / 100.0; }   // random 10.00 .. 14.00 V
+static double fakeBatteryV()   { return random(1000, 1401) / 100.0; }      // random 10.00 .. 14.00 V
+static double fakeBatteryA()   { return random(0, 5001) / 100.0 - 20.0; }  // random -20.0 .. +30.0 A
 
 // Fake tanks: instance, fluid type, base level %, sweep amplitude %, capacity L.
 struct FakeTank { uint8_t instance; tN2kFluidType type; double base, amp, capacityL; };
@@ -129,15 +130,18 @@ void loop() {
                   fakeRpm(), oilP / 1e5, oilT, coolT, ALARM_TEST ? "  [ALARM TEST]" : "");
   }
 
-  // PGN 127508 - battery status (random 10..14 V), ~1.5 Hz
+  // PGN 127508 - battery status for each bank (random 10..14 V), ~1.5 s
+  static const uint8_t BATTERIES[] = { 0, 1 };   // 0 = house, 1 = start
   static uint32_t lastBat = 0;
   if (now - lastBat >= 1500) {
     lastBat = now;
-    double v = fakeBatteryV();
-    tN2kMsg m;
-    SetN2kDCBatStatus(m, 0 /*instance*/, v, N2kDoubleNA, N2kDoubleNA, 0xff);
-    NMEA2000.SendMsg(m);
-    Serial.printf("battery=%.2f V\n", v);
+    for (unsigned i = 0; i < sizeof(BATTERIES) / sizeof(BATTERIES[0]); i++) {
+      double v = fakeBatteryV(), a = fakeBatteryA();   // independent random values per bank
+      tN2kMsg m;
+      SetN2kDCBatStatus(m, BATTERIES[i], v, a, N2kDoubleNA, 0xff);   // voltage, current, temp
+      NMEA2000.SendMsg(m);
+      Serial.printf("battery[%u]=%.2f V  %.1f A\n", BATTERIES[i], v, a);
+    }
   }
 
   // PGN 127505 - fluid level for each fake tank, ~2.5 s
