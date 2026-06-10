@@ -6,6 +6,8 @@
  * with real sensor readings later.
  *   PGN 127488 (Rapid Update) : RPM
  *   PGN 127489 (Dynamic)      : oil pressure, oil temp, coolant temp
+ *   PGN 127508 (Battery)      : voltage (random 10..14 V)
+ *   PGN 127505 (Fluid Level)  : fuel / fresh water / black water tanks
  *
  * Board : ESP32 WROOM-32   CAN: VP230 transceiver (same wiring as the buzzer)
  *   ESP32 GPIO5 -> VP230 CTX (TX),  GPIO4 -> VP230 CRX (RX),  3V3, GND, CANH/CANL
@@ -35,7 +37,9 @@ static const uint8_t NODE_SOURCE_ADDR = 22;   // starting address (auto-claims i
 // PGNs we transmit (announced to the bus).
 //   127488 = Engine Parameters, Rapid Update (RPM)
 //   127489 = Engine Parameters, Dynamic     (oil temp, coolant temp, ...)
-static const unsigned long TX_PGNS[] = { 127488L, 127489L, 0 };
+//   127508 = Battery Status                 (voltage)
+//   127505 = Fluid Level                    (tanks)
+static const unsigned long TX_PGNS[] = { 127488L, 127489L, 127508L, 127505L, 0 };
 
 // ALARM_TEST: send OVER-LIMIT values + warning flags to make the plotter raise
 // engine alarms (coolant >130 C, oil pressure ~14 psi). false = normal sweeps.
@@ -46,11 +50,21 @@ static double fakeRpm()        { return ALARM_TEST ? 2000.0 : 1200.0 + 800.0 * s
 static double fakeCoolantC()   { return ALARM_TEST ? 135.0  : 82.0   + 6.0   * sin(millis() / 9000.0); }  // >130 = over-temp
 static double fakeOilC()       { return 95.0 + 5.0 * sin(millis() / 11000.0); }                          // oil temp stays normal
 static double fakeOilPressPa() { return ALARM_TEST ? 1.0e5  : (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // 1 bar (~14.5 psi) < 20
+static double fakeBatteryV()   { return random(1000, 1401) / 100.0; }   // random 10.00 .. 14.00 V
+
+// Fake tanks: instance, fluid type, base level %, sweep amplitude %, capacity L.
+struct FakeTank { uint8_t instance; tN2kFluidType type; double base, amp, capacityL; };
+static const FakeTank TANKS[] = {
+  { 0, N2kft_Fuel,       65.0, 10.0, 200.0 },   // fuel
+  { 1, N2kft_Water,      50.0, 15.0, 150.0 },   // fresh water
+  { 2, N2kft_BlackWater, 30.0, 10.0,  80.0 },   // waste / black water
+};
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println(F("\n=== engine_tx: fake RPM over PGN 127488 ==="));
+  randomSeed(esp_random());
+  Serial.println(F("\n=== engine_tx: fake engine / battery / tank data ==="));
 
   // Identify ourselves on the bus.
   NMEA2000.SetProductInformation(
@@ -113,5 +127,29 @@ void loop() {
     NMEA2000.SendMsg(m);
     Serial.printf("RPM=%.0f  oilP=%.1fbar  oilT=%.0fC  coolant=%.0fC%s\n",
                   fakeRpm(), oilP / 1e5, oilT, coolT, ALARM_TEST ? "  [ALARM TEST]" : "");
+  }
+
+  // PGN 127508 - battery status (random 10..14 V), ~1.5 Hz
+  static uint32_t lastBat = 0;
+  if (now - lastBat >= 1500) {
+    lastBat = now;
+    double v = fakeBatteryV();
+    tN2kMsg m;
+    SetN2kDCBatStatus(m, 0 /*instance*/, v, N2kDoubleNA, N2kDoubleNA, 0xff);
+    NMEA2000.SendMsg(m);
+    Serial.printf("battery=%.2f V\n", v);
+  }
+
+  // PGN 127505 - fluid level for each fake tank, ~2.5 s
+  static uint32_t lastTank = 0;
+  if (now - lastTank >= 2500) {
+    lastTank = now;
+    for (unsigned i = 0; i < sizeof(TANKS) / sizeof(TANKS[0]); i++) {
+      const FakeTank &tk = TANKS[i];
+      double level = tk.base + tk.amp * sin(millis() / 13000.0 + tk.instance);
+      tN2kMsg m;
+      SetN2kFluidLevel(m, tk.instance, tk.type, level, tk.capacityL);
+      NMEA2000.SendMsg(m);
+    }
   }
 }
