@@ -55,6 +55,28 @@ phone — no app, no internet needed.
 > relay for a low-current buzzer — set `ALARM_ACTIVE_HIGH = true` for a
 > low-side transistor switch. See [WIRING.md](WIRING.md) for the full schematic.
 
+### Why a VP230 if the ESP32 already has CAN?
+
+Because a **CAN controller** and a **CAN transceiver** are two different things —
+you need both, and the ESP32 only has the controller.
+
+| | What it does | Signal |
+|---|---|---|
+| **ESP32 TWAI** (controller) | The logic: frame timing, bit-stuffing, arbitration, CRC, ACK, error handling | Single-ended **3.3 V logic** on TX/RX pins |
+| **VP230** (transceiver) | The physical layer: converts that logic to/from the bus | **Differential CAN-H / CAN-L** on the wire |
+
+The ESP32's built-in controller only exposes **logic-level TX/RX pins (0–3.3 V)**.
+The NMEA 2000 / SeaTalk NG bus is a **differential pair** (CAN-H / CAN-L around
+~2.5 V, with specific dominant/recessive levels, common-mode range and drive
+strength) — you can't drive or read that from a GPIO. The VP230 sits in between
+and does the translation, and adds the electrical robustness (proper levels to
+coexist with the plotter/pilot, common-mode tolerance, ESD protection) a bare
+pin doesn't have.
+
+In short: **controller = the brain, transceiver = the mouth/ears on the wire.**
+(It's the same reason a bare ESP8266 or Uno can't do this at all — they lack the
+controller *and* the transceiver.)
+
 ### Wiring
 
 📐 **Full ASCII schematic + pin map: [WIRING.md](WIRING.md).** Summary below.
