@@ -37,11 +37,15 @@ static const uint8_t NODE_SOURCE_ADDR = 22;   // starting address (auto-claims i
 //   127489 = Engine Parameters, Dynamic     (oil temp, coolant temp, ...)
 static const unsigned long TX_PGNS[] = { 127488L, 127489L, 0 };
 
-// Fake values: slow sweeps so the gauges visibly move (prove they're live).
-static double fakeRpm()        { return 1200.0 + 800.0 * sin(millis() / 3000.0); }  // ~400..2000 rpm
-static double fakeCoolantC()   { return 82.0   + 6.0   * sin(millis() / 9000.0); }  // ~76..88 C
-static double fakeOilC()       { return 95.0   + 5.0   * sin(millis() / 11000.0); } // ~90..100 C
-static double fakeOilPressPa() { return (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // ~3.7..4.3 bar (Pa)
+// ALARM_TEST: send OVER-LIMIT values + warning flags to make the plotter raise
+// engine alarms (coolant >130 C, oil pressure ~14 psi). false = normal sweeps.
+static const bool ALARM_TEST = true;
+
+// Fake values: normal demo = slow sweeps; ALARM_TEST = fixed out-of-range.
+static double fakeRpm()        { return ALARM_TEST ? 2000.0 : 1200.0 + 800.0 * sin(millis() / 3000.0); }
+static double fakeCoolantC()   { return ALARM_TEST ? 135.0  : 82.0   + 6.0   * sin(millis() / 9000.0); }  // >130 = over-temp
+static double fakeOilC()       { return 95.0 + 5.0 * sin(millis() / 11000.0); }                          // oil temp stays normal
+static double fakeOilPressPa() { return ALARM_TEST ? 1.0e5  : (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // 1 bar (~14.5 psi) < 20
 
 void setup() {
   Serial.begin(115200);
@@ -87,16 +91,27 @@ void loop() {
   if (now - lastDyn >= 1000) {
     lastDyn = now;
     double oilP = fakeOilPressPa(), oilT = fakeOilC(), coolT = fakeCoolantC();
+    // Discrete warning flags (Status 1): bit1 = OverTemperature, bit2 = LowOilPressure.
+    // Set them in ALARM_TEST so the plotter raises the warning explicitly, not
+    // just via its configured numeric thresholds.
+    tN2kEngineDiscreteStatus1 st1(ALARM_TEST ? 0x0006 : 0x0000);
     tN2kMsg m;
+    // All trailing args given explicitly to disambiguate the overloaded helper.
     SetN2kEngineDynamicParam(m, ENGINE_INSTANCE,
-        oilP,                 // oil pressure (Pa)
-        CToKelvin(oilT),      // oil temperature
-        CToKelvin(coolT),     // coolant temperature
-        N2kDoubleNA,          // alternator voltage (not faked)
-        N2kDoubleNA,          // fuel rate
-        N2kDoubleNA);         // engine hours
+        oilP,                         // oil pressure (Pa)
+        CToKelvin(oilT),              // oil temperature
+        CToKelvin(coolT),             // coolant temperature
+        N2kDoubleNA,                  // alternator voltage (not faked)
+        N2kDoubleNA,                  // fuel rate
+        N2kDoubleNA,                  // engine hours
+        N2kDoubleNA,                  // coolant pressure
+        N2kDoubleNA,                  // fuel pressure
+        N2kInt8NA,                    // engine load
+        N2kInt8NA,                    // engine torque
+        st1,                          // status 1 (warning bits)
+        tN2kEngineDiscreteStatus2(0));// status 2
     NMEA2000.SendMsg(m);
-    Serial.printf("RPM=%.0f  oil=%.0fbar/%.0fC  coolant=%.0fC\n",
-                  fakeRpm(), oilP / 1e5, oilT, coolT);
+    Serial.printf("RPM=%.0f  oilP=%.1fbar  oilT=%.0fC  coolant=%.0fC%s\n",
+                  fakeRpm(), oilP / 1e5, oilT, coolT, ALARM_TEST ? "  [ALARM TEST]" : "");
   }
 }
