@@ -160,10 +160,26 @@ roadmap below covers decoding specific conditions directly for named alarms.
 | `SIMULATE` | Cycle each alarm's pattern at boot |
 | `WIFI_ENABLE` / `AP_SSID` | Web server on/off and hotspot name |
 
+## Transmitting data (experimental)
+
+The main `buzzer` sketch is **listen-only**. A separate proof-of-concept,
+[`engine_tx/engine_tx.ino`](engine_tx/engine_tx.ino), shows the ESP32 *sending*
+on the bus — it broadcasts a fake, slowly-sweeping engine RPM (**PGN 127488**)
+that shows up on the Axiom's engine gauge, as the seed of a general
+"NMEA → Raymarine converter."
+
+- Uses the **NMEA2000 library** (Timo Lappalainen) + **NMEA2000_esp32** — install
+  both via the Arduino Library Manager. Same VP230 wiring as the buzzer.
+- It claims a source address and announces itself as an Engine node, so it
+  **transmits and ACKs** (no longer passive). Replace `fakeRpm()` with a real
+  sensor reading to make it a true converter.
+
 ## Roadmap
 
 - [x] Relay-driven 12 V buzzer + status LED
 - [x] Limit each alarm to a fixed number of horn pulses
+- [x] Transmit PoC: publish engine RPM (PGN 127488) — `engine_tx`
+- [ ] Merge TX into the main firmware (read alarms *and* publish data)
 - [ ] Auto-silence the buzzer when the alarm is acknowledged on the plotter
 - [ ] **Named alarms** by decoding conditions directly:
   - AIS dangerous via CPA/TCPA from PGNs 129038/129039 + own position
