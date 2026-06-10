@@ -34,13 +34,26 @@ phone — no app, no internet needed.
 
 ## Hardware
 
-| Part | Notes |
-|------|-------|
-| **ESP32** (WROOM-32 dev board) | Any classic ESP32 with the built-in CAN controller |
-| **VP230 / SN65HVD230** CAN transceiver | 3.3 V — pairs directly with the ESP32 |
-| **Relay module** + **12 V buzzer / horn** | Buzzer switched by the relay's NO/COM contacts |
-| **Status LED** + ~330 Ω resistor | Blinks while any alarm is active |
-| Inline fuse for the buzzer | Standard practice for any switched 12 V load |
+### Parts list
+
+| Qty | Part | Notes |
+|-----|------|-------|
+| 1 | **ESP32 WROOM-32** dev board | Any *classic* ESP32 (built-in TWAI/CAN controller). Not ESP8266 / not an S2 unless it has CAN. |
+| 1 | **VP230 / SN65HVD230** CAN transceiver | 3.3 V module — pairs directly with the ESP32. |
+| 1 | **Relay module** (1-channel) | 5 V coil with onboard driver + opto. Contacts must exceed the buzzer's V/A (any 10 A module is fine). |
+| 1 | **12 V buzzer / horn** | Sized to taste. The example unit is 12 V, ≤ 200 mA. |
+| 1 | **LED** (any colour) | Status indicator (blinks while an alarm is active). |
+| 1 | **Resistor ~330 Ω** | Series resistor for the LED (220–470 Ω all fine). |
+| 1 | **Inline fuse + holder** | On the 12 V feed to the buzzer; size to the buzzer's current. |
+| 1 | **12 V → 5 V buck converter** | Powers the ESP32 (5V/VIN) + relay coil from the boat's 12 V. *Or* power via USB on the bench. |
+| 1 | **NMEA 2000 / SeaTalk NG drop** | T-piece + drop cable (or a spur) to tap the backbone. |
+| — | Hookup wire, Dupont jumpers, ferrules | For the low-voltage signal wiring. |
+| 1 | **Enclosure** (optional) | A small sealed box if mounted in a damp location. |
+
+> **Note:** the relay + VP230 reflect the build in this repo. A logic-level
+> **MOSFET** or a suitable NPN (e.g. BC337 for loads ≤ ~0.5 A) can replace the
+> relay for a low-current buzzer — set `ALARM_ACTIVE_HIGH = true` for a
+> low-side transistor switch. See [WIRING.md](WIRING.md) for the full schematic.
 
 ### Wiring
 
