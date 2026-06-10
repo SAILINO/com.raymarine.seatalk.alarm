@@ -1,9 +1,11 @@
 /*
- * engine_tx — fake engine RPM transmitter (NMEA 2000)
- * ---------------------------------------------------
- * Standalone proof-of-concept: broadcasts PGN 127488 (Engine Parameters,
- * Rapid Update) with a fake, slowly-sweeping RPM so it shows up on the Axiom's
- * engine display. Later, replace `fakeRpm()` with a real sensor reading.
+ * engine_tx — fake engine data transmitter (NMEA 2000)
+ * ----------------------------------------------------
+ * Standalone proof-of-concept: broadcasts fake, slowly-sweeping engine values
+ * so they show up on the Axiom's engine display. Replace the fake*() helpers
+ * with real sensor readings later.
+ *   PGN 127488 (Rapid Update) : RPM
+ *   PGN 127489 (Dynamic)      : oil pressure, oil temp, coolant temp
  *
  * Board : ESP32 WROOM-32   CAN: VP230 transceiver (same wiring as the buzzer)
  *   ESP32 GPIO5 -> VP230 CTX (TX),  GPIO4 -> VP230 CRX (RX),  3V3, GND, CANH/CANL
@@ -31,12 +33,15 @@ static const uint8_t ENGINE_INSTANCE = 0;     // 0 = single / port engine
 static const uint8_t NODE_SOURCE_ADDR = 22;   // starting address (auto-claims if taken)
 
 // PGNs we transmit (announced to the bus).
-static const unsigned long TX_PGNS[] = { 127488L, 0 };
+//   127488 = Engine Parameters, Rapid Update (RPM)
+//   127489 = Engine Parameters, Dynamic     (oil temp, coolant temp, ...)
+static const unsigned long TX_PGNS[] = { 127488L, 127489L, 0 };
 
-// Fake RPM: a slow sweep so the gauge visibly moves (proves it's live).
-static double fakeRpm() {
-  return 1200.0 + 800.0 * sin(millis() / 3000.0);   // ~400..2000 rpm
-}
+// Fake values: slow sweeps so the gauges visibly move (prove they're live).
+static double fakeRpm()        { return 1200.0 + 800.0 * sin(millis() / 3000.0); }  // ~400..2000 rpm
+static double fakeCoolantC()   { return 82.0   + 6.0   * sin(millis() / 9000.0); }  // ~76..88 C
+static double fakeOilC()       { return 95.0   + 5.0   * sin(millis() / 11000.0); } // ~90..100 C
+static double fakeOilPressPa() { return (4.0 + 0.3 * sin(millis() / 7000.0)) * 1e5; } // ~3.7..4.3 bar (Pa)
 
 void setup() {
   Serial.begin(115200);
@@ -66,18 +71,32 @@ void setup() {
 
 void loop() {
   NMEA2000.ParseMessages();   // MUST run often: address claim, ACKs, tx queue
-
-  static uint32_t last = 0;
   uint32_t now = millis();
-  if (now - last >= 100) {    // 127488 is "rapid update" -> ~10 Hz
-    last = now;
-    double rpm = fakeRpm();
 
-    tN2kMsg N2kMsg;
-    SetN2kEngineParamRapid(N2kMsg, ENGINE_INSTANCE, rpm);
-    NMEA2000.SendMsg(N2kMsg);
+  // PGN 127488 - RPM (rapid update, ~10 Hz)
+  static uint32_t lastRapid = 0;
+  if (now - lastRapid >= 100) {
+    lastRapid = now;
+    tN2kMsg m;
+    SetN2kEngineParamRapid(m, ENGINE_INSTANCE, fakeRpm());
+    NMEA2000.SendMsg(m);
+  }
 
-    static uint32_t logTs = 0;
-    if (now - logTs >= 1000) { logTs = now; Serial.printf("RPM=%.0f\n", rpm); }
+  // PGN 127489 - oil pressure / oil temp / coolant temp (dynamic, ~1 Hz)
+  static uint32_t lastDyn = 0;
+  if (now - lastDyn >= 1000) {
+    lastDyn = now;
+    double oilP = fakeOilPressPa(), oilT = fakeOilC(), coolT = fakeCoolantC();
+    tN2kMsg m;
+    SetN2kEngineDynamicParam(m, ENGINE_INSTANCE,
+        oilP,                 // oil pressure (Pa)
+        CToKelvin(oilT),      // oil temperature
+        CToKelvin(coolT),     // coolant temperature
+        N2kDoubleNA,          // alternator voltage (not faked)
+        N2kDoubleNA,          // fuel rate
+        N2kDoubleNA);         // engine hours
+    NMEA2000.SendMsg(m);
+    Serial.printf("RPM=%.0f  oil=%.0fbar/%.0fC  coolant=%.0fC\n",
+                  fakeRpm(), oilP / 1e5, oilT, coolT);
   }
 }
