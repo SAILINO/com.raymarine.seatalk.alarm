@@ -145,6 +145,8 @@ static void updateLed() {
   if (now - ts >= LED_BLINK_MS) { ts = now; on = !on; ledWrite(on); }
 }
 
+static uint8_t testHornLeft = 0;            // user-requested buzzer test: pulses still to play
+
 static void updateBuzzer() {
   // Expire NAMED alerts the device stopped re-announcing.
   uint32_t now = millis();
@@ -159,16 +161,21 @@ static void updateBuzzer() {
   for (int i = 0; i < ALARM_COUNT; i++)
     if (A[i].active && A[i].soundsLeft > 0 && (best < 0 || A[i].prio > A[best].prio)) best = i;
 
-  static bool phaseOn = false; static uint32_t phaseTs = 0; static int prevBest = -1;
-  if (best < 0) { buzzerWrite(false); phaseOn = false; prevBest = -1; return; }
-  if (prevBest < 0) {                       // a burst just started: sound the first pulse now
-    phaseOn = true; phaseTs = now; prevBest = best; buzzerWrite(true); return;
+  // The horn should pulse for a real alarm or a user-triggered buzzer test.
+  bool sounding = (best >= 0) || (testHornLeft > 0);
+
+  static bool phaseOn = false; static uint32_t phaseTs = 0; static bool prevSounding = false;
+  if (!sounding) { buzzerWrite(false); phaseOn = false; prevSounding = false; return; }
+  if (!prevSounding) {                      // a burst just started: sound the first pulse now
+    phaseOn = true; phaseTs = now; prevSounding = true; buzzerWrite(true); return;
   }
-  prevBest = best;
   uint16_t dur = phaseOn ? HORN_ON_MS : HORN_OFF_MS;
   if (now - phaseTs >= dur) {
     phaseOn = !phaseOn; phaseTs = now; buzzerWrite(phaseOn);
-    if (!phaseOn && A[best].soundsLeft > 0) A[best].soundsLeft--;   // count one completed pulse
+    if (!phaseOn) {                                                 // count one completed pulse
+      if (best >= 0 && A[best].soundsLeft > 0) A[best].soundsLeft--;
+      else if (testHornLeft > 0) testHornLeft--;                    // test pulses only when no alarm
+    }
   }
 }
 
@@ -417,7 +424,8 @@ button{background:#1c4a5e;color:#e8f0f4;border:0;border-radius:6px;padding:6px 1
 .t.act{box-shadow:0 0 0 2px #ff5a5a}
 </style></head><body><header>&#9875; SeaTalk / NMEA2000
 <button onclick="fetch('/mute')">Silence</button>
-<button onclick="fetch('/reset')">Reset baseline</button></header>
+<button onclick="fetch('/reset')">Reset baseline</button>
+<button onclick="fetch('/testbuzzer')">Test buzzer</button></header>
 <div id=b class=ok>connecting&#8230;</div>
 <div id=dash></div>
 <h2>Alarms (tap to enable/disable)</h2><div id=alarms></div>
@@ -493,8 +501,15 @@ static void handleReset() {
 
 static void handleMute() {                        // user acknowledges: clear all alarms
   for (int i = 0; i < ALARM_COUNT; i++) { A[i].active = false; A[i].lastSeen = 0; A[i].soundsLeft = 0; }
+  testHornLeft = 0;
   buzzerWrite(false);
   logf("-- silenced by user --");
+  server.send(200, "text/plain", "ok");
+}
+
+static void handleTestBuzzer() {                  // user test: play the horn cadence once
+  testHornLeft = ALARM_REPEATS;
+  logf("-- buzzer test by user --");
   server.send(200, "text/plain", "ok");
 }
 
@@ -520,6 +535,7 @@ static void setupWifi() {
   server.on("/data", handleData);
   server.on("/reset", handleReset);               // clear learned signatures (baseline)
   server.on("/mute", handleMute);                 // acknowledge / silence all alarms
+  server.on("/testbuzzer", handleTestBuzzer);     // sound the horn once to test the buzzer
   server.on("/toggle", handleToggle);             // enable/disable one alarm
   server.onNotFound(handleRoot);                  // any URL shows the page (pops captive portal)
   server.begin();
