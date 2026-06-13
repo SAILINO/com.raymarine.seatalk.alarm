@@ -84,14 +84,14 @@ struct Alarm {
   bool        enabled;     // user toggle (persisted); a disabled alarm never fires
 };
 static Alarm A[ALARM_COUNT] = {
-  /*AL_DEPTH*/        {"DEPTH shallow",    100, false, 0, 0, true},
-  /*AL_AIS*/         {"AIS dangerous",     95, false, 0, 0, true},
-  /*AL_RADAR*/       {"RADAR dangerous",   95, false, 0, 0, true},
-  /*AL_GPS*/         {"GPS failure",       85, false, 0, 0, true},
-  /*AL_PILOT_BATT*/  {"PILOT low batt",    70, false, 0, 0, true},
-  /*AL_PILOT_OC*/    {"PILOT off course",  80, false, 0, 0, true},
-  /*AL_PILOT_WSHIFT*/{"PILOT wind shift",  60, false, 0, 0, true},
-  /*AL_AXIOM*/       {"AXIOM alarm",       90, false, 0, 0, true},
+  /*AL_DEPTH*/        {"TIEFE flach",      100, false, 0, 0, true},
+  /*AL_AIS*/         {"AIS Gefahr",        95, false, 0, 0, true},
+  /*AL_RADAR*/       {"RADAR Gefahr",      95, false, 0, 0, true},
+  /*AL_GPS*/         {"GPS Ausfall",       85, false, 0, 0, true},
+  /*AL_PILOT_BATT*/  {"PILOT Batt schwach",70, false, 0, 0, true},
+  /*AL_PILOT_OC*/    {"PILOT vom Kurs",    80, false, 0, 0, true},
+  /*AL_PILOT_WSHIFT*/{"PILOT Winddreh",    60, false, 0, 0, true},
+  /*AL_AXIOM*/       {"AXIOM Alarm",       90, false, 0, 0, true},
 };
 
 static Preferences prefs;
@@ -121,14 +121,14 @@ static void logf(const char* fmt, ...) {
 
 static void raiseAlert(AlarmId id) {        // NAMED alert seen as active
   if (!A[id].enabled) return;               // user-disabled: ignore entirely
-  if (!A[id].active) { logf(">>> ALARM ON : %s", A[id].name); A[id].soundsLeft = ALARM_REPEATS; }
+  if (!A[id].active) { logf(">>> ALARM AN : %s", A[id].name); A[id].soundsLeft = ALARM_REPEATS; }
   A[id].active = true;
   A[id].lastSeen = millis();
 }
 static void setDirect(AlarmId id, bool on, bool off) {  // numeric w/ hysteresis
   if (!A[id].enabled) return;               // user-disabled: ignore entirely
-  if (!A[id].active && on)  { A[id].active = true;  A[id].soundsLeft = ALARM_REPEATS; logf(">>> ALARM ON : %s", A[id].name); }
-  if ( A[id].active && off) { A[id].active = false; logf("<<< alarm off: %s", A[id].name); }
+  if (!A[id].active && on)  { A[id].active = true;  A[id].soundsLeft = ALARM_REPEATS; logf(">>> ALARM AN : %s", A[id].name); }
+  if ( A[id].active && off) { A[id].active = false; logf("<<< Alarm aus: %s", A[id].name); }
 }
 
 static void buzzerWrite(bool on) { digitalWrite(BUZZER_PIN, (on == ALARM_ACTIVE_HIGH) ? HIGH : LOW); }
@@ -153,7 +153,7 @@ static void updateBuzzer() {
   for (int i = 0; i < ALARM_COUNT; i++)
     if (A[i].active && A[i].lastSeen && (now - A[i].lastSeen > ALERT_TIMEOUT_MS)) {
       A[i].active = false; A[i].lastSeen = 0; A[i].soundsLeft = 0;
-      logf("<<< alarm off (timeout): %s", A[i].name);
+      logf("<<< Alarm aus (Timeout): %s", A[i].name);
     }
 
   // Highest-priority active alarm that still has horn pulses left to play.
@@ -404,9 +404,10 @@ static DNSServer dns;
 // Self-contained page: polls /data every 1.5s, shows active alarms + log.
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>SeaTalk Alarm</title><style>
+<title>ORJA SeaTalk Alarm</title><style>
 body{font-family:system-ui,Arial;margin:0;background:#0b1f2a;color:#e8f0f4}
-header{padding:14px 16px;background:#0e2a38;font-size:18px;font-weight:600}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 16px;background:#0e2a38;font-size:18px;font-weight:600}
+.btns{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
 #b{padding:12px 16px;font-weight:700}.ok{background:#13502a}
 .al{background:#7a1420;animation:bl 1s steps(1) infinite}
 @keyframes bl{50%{background:#3a0a10}}
@@ -415,27 +416,27 @@ header{padding:14px 16px;background:#0e2a38;font-size:18px;font-weight:600}
 .cl{font-size:11px;color:#8fb0c0;text-transform:uppercase;letter-spacing:.5px}
 .cv{font-size:20px;font-weight:600;margin-top:2px}
 h2{font-size:12px;color:#8fb0c0;margin:6px 12px 0;text-transform:uppercase;letter-spacing:.5px}
-button{background:#1c4a5e;color:#e8f0f4;border:0;border-radius:6px;padding:6px 12px;font-size:13px;float:right;margin-top:-2px}
+button{background:#1c4a5e;color:#e8f0f4;border:0;border-radius:6px;padding:6px 12px;font-size:13px}
 #log{padding:4px 12px;font-family:monospace;font-size:12px}
 .r{padding:3px 0;border-bottom:1px solid #16323f;white-space:pre-wrap}
 #alarms{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px}
-.t{padding:6px 11px;border-radius:14px;font-size:13px;cursor:pointer;background:#13502a;color:#e8f0f4;user-select:none}
+.t{padding:12px 18px;border-radius:20px;font-size:17px;cursor:pointer;background:#13502a;color:#e8f0f4;user-select:none}
 .t.off{background:#26323a;color:#7a8a93;text-decoration:line-through}
 .t.act{box-shadow:0 0 0 2px #ff5a5a}
-</style></head><body><header>&#9875; SeaTalk / NMEA2000
-<button onclick="fetch('/mute')">Silence</button>
-<button onclick="fetch('/reset')">Reset baseline</button>
-<button onclick="fetch('/testbuzzer')">Test buzzer</button></header>
-<div id=b class=ok>connecting&#8230;</div>
+</style></head><body><header>&#9875; ORJA SeaTalk / NMEA2000
+<span class=btns><button onclick="fetch('/mute')">Stumm</button>
+<button onclick="fetch('/reset')">Basis zur&#252;cksetzen</button>
+<button onclick="fetch('/testbuzzer')">Summer testen</button></span></header>
+<div id=b class=ok>Verbinde&#8230;</div>
 <div id=dash></div>
-<h2>Alarms (tap to enable/disable)</h2><div id=alarms></div>
-<h2>Event log</h2><div id=log></div><script>
+<h2>Alarme (tippen zum Ein-/Ausschalten)</h2><div id=alarms></div>
+<h2>Ereignisprotokoll</h2><div id=log></div><script>
 function esc(s){return s.replace(/[<&]/g,c=>c=='<'?'&lt;':'&amp;')}
 async function t(){try{
  const x=(await (await fetch('/data',{cache:'no-store'})).text()).split('\n');
  const a=x[0].slice(7).split(',').filter(s=>s.length),b=document.getElementById('b');
  if(a.length){b.className='al';b.textContent='⚠ '+a.join('   •   ')}
- else{b.className='ok';b.textContent='All clear'}
+ else{b.className='ok';b.textContent='Alles klar'}
  let i=1,dash=[],al=[];
  for(;i<x.length&&x[i].slice(0,2)=='D:';i++){dash.push(x[i].slice(2).split('|'))}
  for(;i<x.length&&x[i].slice(0,3)=='AL:';i++){al.push(x[i].slice(3).split('|'))}
@@ -468,16 +469,15 @@ static void handleData() {
     out += "D:"; out += label; out += "|"; out += val; out += "|";
     out += String((now - t) / 1000); out += "\n";
   };
-  if (!isnan(T.depth)) { snprintf(b, sizeof b, "%.1f m", T.depth); add("Depth", T.depthT, b); }
+  if (!isnan(T.depth)) { snprintf(b, sizeof b, "%.1f m", T.depth); add("Tiefe", T.depthT, b); }
   if (!isnan(T.aws))   { snprintf(b, sizeof b, "%.1f kn  %.0f\xC2\xB0 %s", T.aws,
-                                  isnan(T.awa) ? 0 : T.awa, T.windApp ? "App" : "True"); add("Wind", T.windT, b); }
-  if (!isnan(T.stw))   { snprintf(b, sizeof b, "%.1f kn", T.stw);           add("Speed STW", T.stwT, b); }
+                                  isnan(T.awa) ? 0 : T.awa, T.windApp ? "scheinb." : "wahr"); add("Wind", T.windT, b); }
   if (!isnan(T.sog))   { snprintf(b, sizeof b, "%.1f kn", T.sog);           add("SOG", T.sogT, b); }
   if (!isnan(T.cog))   { snprintf(b, sizeof b, "%.0f\xC2\xB0", T.cog);      add("COG", T.sogT, b); }
-  if (!isnan(T.hdg))   { snprintf(b, sizeof b, "%.0f\xC2\xB0 %s", T.hdg, T.hdgMag ? "M" : "T"); add("Heading", T.hdgT, b); }
+  if (!isnan(T.hdg))   { snprintf(b, sizeof b, "%.0f\xC2\xB0 %s", T.hdg, T.hdgMag ? "M" : "T"); add("Steuerkurs", T.hdgT, b); }
   if (!isnan(T.lat))   { snprintf(b, sizeof b, "%.4f%c  %.4f%c", fabs(T.lat), T.lat >= 0 ? 'N' : 'S',
                                   fabs(T.lon), T.lon >= 0 ? 'E' : 'W'); add("Position", T.posT, b); }
-  if (!isnan(T.rudder)){ snprintf(b, sizeof b, "%+.0f\xC2\xB0", T.rudder); add("Rudder", T.rudT, b); }
+  if (!isnan(T.rudder)){ snprintf(b, sizeof b, "%+.0f\xC2\xB0", T.rudder); add("Ruder", T.rudT, b); }
 
   // Alarm toggles: "AL:id|name|enabled|active"
   for (int i = 0; i < ALARM_COUNT; i++) {
@@ -495,7 +495,7 @@ static void handleData() {
 
 static void handleReset() {
   seenReset();
-  logf("-- baseline reset: now logging only NEW proprietary signatures --");
+  logf("-- Basis zurueckgesetzt: protokolliere nur NEUE proprietaere Signaturen --");
   server.send(200, "text/plain", "ok");
 }
 
@@ -503,13 +503,13 @@ static void handleMute() {                        // user acknowledges: clear al
   for (int i = 0; i < ALARM_COUNT; i++) { A[i].active = false; A[i].lastSeen = 0; A[i].soundsLeft = 0; }
   testHornLeft = 0;
   buzzerWrite(false);
-  logf("-- silenced by user --");
+  logf("-- vom Benutzer stummgeschaltet --");
   server.send(200, "text/plain", "ok");
 }
 
 static void handleTestBuzzer() {                  // user test: play the horn cadence once
   testHornLeft = ALARM_REPEATS;
-  logf("-- buzzer test by user --");
+  logf("-- Summertest vom Benutzer --");
   server.send(200, "text/plain", "ok");
 }
 
@@ -520,7 +520,7 @@ static void handleToggle() {                       // enable/disable one alarm (
       A[id].enabled = !A[id].enabled;
       if (!A[id].enabled) { A[id].active = false; A[id].soundsLeft = 0; A[id].lastSeen = 0; }
       saveEnabled();
-      logf("-- %s %s --", A[id].name, A[id].enabled ? "ENABLED" : "disabled");
+      logf("-- %s %s --", A[id].name, A[id].enabled ? "AKTIVIERT" : "deaktiviert");
     }
   }
   server.send(200, "text/plain", "ok");
@@ -539,7 +539,7 @@ static void setupWifi() {
   server.on("/toggle", handleToggle);             // enable/disable one alarm
   server.onNotFound(handleRoot);                  // any URL shows the page (pops captive portal)
   server.begin();
-  logf("WiFi AP '%s' up -> connect, browse http://%s/", AP_SSID, ip.toString().c_str());
+  logf("WLAN AP '%s' aktiv -> verbinden, http://%s/ oeffnen", AP_SSID, ip.toString().c_str());
 }
 #endif
 
